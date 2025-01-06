@@ -63,6 +63,10 @@ int8_t recognition_enabled = 1;
 static int8_t is_enrolling = 0;
 face_id_list id_list = { 0 };
 
+TaskHandle_t streamTaskHandle = NULL;
+bool isStreaming = false;
+
+
 extern int faceId;
 extern boolean isEnrollingFace;
 extern void saveFaceData(uint8_t *data, size_t length);

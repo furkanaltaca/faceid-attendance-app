@@ -4,10 +4,8 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
-// #include "fd_forward.h"
-// #include "fr_forward.h"
 #include "fr_flash.h"
-
+#include "esp_http_server.h"
 
 // Select camera model
 #define CAMERA_MODEL_AI_THINKER
@@ -23,10 +21,11 @@ void startCameraServer();
 extern face_id_list id_list;
 extern int8_t detection_enabled;
 extern int8_t recognition_enabled;
+// void streamTask(void *pvParameters);
 
 #define TOUCH_PIN 12
-unsigned long buttonPressStartTime = 0;   // Butona basma başlangıç zamanı
-const unsigned long holdDuration = 2000;  // Mod değiştirme süresi (3 saniye)
+unsigned long buttonPressStartTime = 0;
+const unsigned long holdDuration = 2000;
 bool buttonHandled = false;
 bool buttonWasPressed = false;
 
@@ -52,11 +51,11 @@ void setup() {
   Serial.setDebugOutput(true);
   Serial.println();
 
-  printSerial("Yoklama Modu", "Hoşgeldiniz!");
-
   setupCamera();
 
   fetchStudentList();
+
+  printSerial("Yoklama Modu", "Hoşgeldiniz!");
 
   // Delete All faces from storage
   // while (delete_face_id_in_flash(&id_list) > -1) {
@@ -68,7 +67,6 @@ void setup() {
 void loop() {
   int touchValue = touchRead(TOUCH_PIN);
   bool buttonPressed = (touchValue == 1);
-
   if (buttonPressed && !buttonWasPressed) {
     buttonPressStartTime = millis();
     buttonHandled = false;
@@ -80,22 +78,24 @@ void loop() {
 
       if (isEnrollMode) {
         Serial.println("Kayit Modu");
+        sendModeInfo("Kayıt Modu");
       } else {
         Serial.println("Yoklama Modu");
+        sendModeInfo("Yoklama Modu");
       }
-      buttonHandled = true; 
-      delay(100);         
+      buttonHandled = true;
+      delay(100);
     }
   } else if (!buttonPressed && buttonWasPressed) {
     if (!buttonHandled && millis() - buttonPressStartTime < holdDuration) {
       if (isEnrollMode) {
         faceId = -1;
         isEnrollingFace = true;
-        nextStudent(); 
+        nextStudent();
       }
     }
     buttonHandled = true;
-    buttonPressStartTime = 0; 
+    buttonPressStartTime = 0;
   }
 
   buttonWasPressed = buttonPressed;
@@ -112,44 +112,36 @@ void loop() {
 }
 
 void enrollmentMode() {
-  String currentUserText = students[currentStudentIndex].name;
+  String currentStudentName = students[currentStudentIndex].name;
   if (students[currentStudentIndex].faceId == -1) {
 
-    if (lastDisplayedUserText != currentUserText) {
-      printSerial("Yuzunuzu okutun", currentUserText);
-      lastDisplayedUserText = currentUserText;
+    if (lastDisplayedUserText != currentStudentName) {
+      printSerial("Yuzunuzu okutun", currentStudentName);
+      lastDisplayedUserText = currentStudentName;
     }
     int detectedFaceId = detectFace();
     if (detectedFaceId != -1) {
       students[currentStudentIndex].faceId = detectedFaceId;
-      disableFaceRecognition();
-      delay(1000);
       sendEnrollFace(students[currentStudentIndex].studentNo, students[currentStudentIndex].faceId);
-      delay(1000);
-      enableFaceRecognition();
-      printSerial(currentUserText, "Kayit Tamam!");
+      printSerial(currentStudentName, "Kayit Tamam!");
       faceId = -1;
       isEnrollingFace = false;
     }
   } else {
-    printSerial(currentUserText, "Kaydedilmiş");
+    printSerial(currentStudentName, "Kaydedilmiş");
   }
 }
 
 void attendanceMode() {
-  int detectedFaceId = detectFace(); 
+  int detectedFaceId = detectFace();
   if (detectedFaceId != -1) {
     for (int i = 0; i < studentCount; i++) {
       if (students[i].faceId == detectedFaceId) {
         if (!students[i].isPresent) {
-          students[i].isPresent = true;  // Derse giriş işaretlendi
+          students[i].isPresent = true;
           printSerial("Hosgeldiniz", students[i].name);
           printSerial("Hosgeldiniz", String(students[i].studentNo));
-          disableFaceRecognition();
-          delay(1000);
           sendAttendance(students[i].studentNo);
-          delay(1000);
-          enableFaceRecognition();
         } else {
           faceId = -1;
         }
@@ -169,11 +161,13 @@ int detectFace() {
 }
 
 void nextStudent() {
-  Serial.println("next user");
+  Serial.println("Next student for enroll");
   currentStudentIndex++;
   if (currentStudentIndex >= studentCount) {
-    currentStudentIndex = 0;  // İlk öğrenciye dön
+    currentStudentIndex = 0;
   }
+  String currentStudentName = students[currentStudentIndex].name;
+  sendNextStudentInfoForEnroll(currentStudentName);
 }
 
 void setupCamera() {
@@ -209,11 +203,6 @@ void setupCamera() {
     config.fb_count = 1;
   }
 
-  // #if defined(CAMERA_MODEL_ESP_EYE)
-  //   pinMode(13, INPUT_PULLUP);
-  //   pinMode(14, INPUT_PULLUP);
-  // #endif
-
   // camera init
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
@@ -222,25 +211,12 @@ void setupCamera() {
   }
 
   sensor_t* s = esp_camera_sensor_get();
-  //initial sensors are flipped vertically and colors are a bit saturated
-  // if (s->id.PID == OV3660_PID) {
-  //   s->set_vflip(s, 1);        //flip it back
-  //   s->set_brightness(s, 1);   //up the blightness just a bit
-  //   s->set_saturation(s, -2);  //lower the saturation
-  // }
-  //drop down frame size for higher initial frame rate
   s->set_framesize(s, FRAMESIZE_QVGA);
-
-  s->set_gain_ctrl(s, 0);      // Otomatik kazanç kapalı
-  s->set_exposure_ctrl(s, 0);  // Otomatik pozlama kapalı
-  s->set_brightness(s, 0);     // Parlaklık sıfır (ayarlamak için değiştirilebilir)
-  s->set_saturation(s, 0);     // Doygunluk sıfır
-  s->set_hmirror(s, 1);        // Yatay flip (mirror) etkinleştirme
-
-  // #if defined(CAMERA_MODEL_M5STACK_WIDE)
-  //   s->set_vflip(s, 1);
-  //   s->set_hmirror(s, 1);
-  // #endif
+  s->set_gain_ctrl(s, 0);
+  s->set_exposure_ctrl(s, 0);
+  s->set_brightness(s, 0);
+  s->set_saturation(s, 0);
+  s->set_hmirror(s, 1);
 
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);
@@ -258,6 +234,8 @@ void setupCamera() {
   Serial.print("Camera Ready! Use 'http://");
   Serial.print(WiFi.localIP());
   Serial.println("' to connect");
+
+  sendCameraWebServerIp("http://" + WiFi.localIP().toString());
 }
 
 void printSerial(String line1, String line2) {
@@ -289,6 +267,8 @@ String turkceToAscii(String input) {
 }
 
 void fetchStudentList() {
+  disableFaceRecognition();
+  delay(1000);
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
     http.begin("https://yoklamasistemi.azurewebsites.net/students");
@@ -311,7 +291,7 @@ void fetchStudentList() {
             students[studentCount].name = obj["name"].as<String>();
             students[studentCount].studentNo = obj["id"].as<int>();
             students[studentCount].faceId = obj["face_id"].isNull() ? -1 : obj["faceId"].as<int>();
-            students[studentCount].isPresent = obj["attended"].as<bool>();  // Başlangıçta yoklama yok
+            students[studentCount].isPresent = obj["attended"].as<bool>();
 
             studentCount++;
           } else {
@@ -330,19 +310,22 @@ void fetchStudentList() {
   } else {
     Serial.println("Wi-Fi bağlantısı yok!");
   }
+
+  delay(1000);
+  enableFaceRecognition();
 }
 
 void sendAttendance(int studentNo) {
+  disableFaceRecognition();
+  delay(1000);
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
     http.begin("https://yoklamasistemi.azurewebsites.net/enrollForLesson");
 
-    // Headers
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Connection", "close");
     http.addHeader("Accept", "*/*");
 
-    // JSON body
     String httpRequestData = "{\"StudentNo\":" + String(studentNo) + "}";
 
     int httpResponseCode = http.POST(httpRequestData);
@@ -359,19 +342,21 @@ void sendAttendance(int studentNo) {
 
     http.end();
   }
+  delay(1000);
+  enableFaceRecognition();
 }
 
 void sendEnrollFace(int studentNo, int faceId) {
+  disableFaceRecognition();
+  delay(1000);
   if (WiFi.status() == WL_CONNECTED) {
     HTTPClient http;
     http.begin("https://yoklamasistemi.azurewebsites.net/updateFaceID");
 
-    // Headers
     http.addHeader("Content-Type", "application/json");
     http.addHeader("Connection", "close");
     http.addHeader("Accept", "*/*");
 
-    // JSON body
     String httpRequestData = "{\"StudentNo\":" + String(studentNo) + ", \"FaceID\":" + String(faceId) + "}";
 
     int httpResponseCode = http.POST(httpRequestData);
@@ -388,6 +373,108 @@ void sendEnrollFace(int studentNo, int faceId) {
 
     http.end();
   }
+  delay(1000);
+  enableFaceRecognition();
+}
+
+void sendCameraWebServerIp(String ipAddress) {
+  disableFaceRecognition();
+  delay(1000);
+
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin("https://yoklamasistemi.azurewebsites.net/SaveCameraServerIpAddress");
+
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Connection", "close");
+    http.addHeader("Accept", "*/*");
+
+    String httpRequestData = "{\"IpAddress\":\"" + String(ipAddress) + ":81/stream\"}";
+
+    Serial.println(httpRequestData);
+
+    int httpResponseCode = http.POST(httpRequestData);
+
+    if (httpResponseCode > 0) {
+      Serial.printf("[http] POST... code: %d\n", httpResponseCode);
+      if (httpResponseCode == HTTP_CODE_OK) {
+        String response = http.getString();
+        Serial.println("Yanıt: " + response);
+      }
+    } else {
+      Serial.printf("[http] POST... failed, error: %s\n", http.errorToString(httpResponseCode).c_str());
+    }
+
+    http.end();
+  }
+  delay(1000);
+  enableFaceRecognition();
+}
+
+void sendModeInfo(String mode) {
+  disableFaceRecognition();
+  delay(1000);
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin("https://yoklamasistemi.azurewebsites.net/modeInfo");
+
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Connection", "close");
+    http.addHeader("Accept", "*/*");
+
+    String httpRequestData = "{\"Mode\":\"" + mode + "\"}";
+
+    Serial.println(httpRequestData);
+
+    int httpResponseCode = http.POST(httpRequestData);
+
+    if (httpResponseCode > 0) {
+      Serial.printf("[http] POST... code: %d\n", httpResponseCode);
+      if (httpResponseCode == HTTP_CODE_OK) {
+        String response = http.getString();
+        Serial.println("Yanıt: " + response);
+      }
+    } else {
+      Serial.printf("[http] POST... failed, error: %s\n", http.errorToString(httpResponseCode).c_str());
+    }
+
+    http.end();
+  }
+  delay(1000);
+  enableFaceRecognition();
+}
+
+void sendNextStudentInfoForEnroll(String studentName) {
+  disableFaceRecognition();
+  delay(1000);
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin("https://yoklamasistemi.azurewebsites.net/nextStudentInfo");
+
+    http.addHeader("Content-Type", "application/json");
+    http.addHeader("Connection", "close");
+    http.addHeader("Accept", "*/*");
+
+    String httpRequestData = "{\"StudentName\":\"" + studentName + "\"}";
+
+    Serial.println(httpRequestData);
+
+    int httpResponseCode = http.POST(httpRequestData);
+
+    if (httpResponseCode > 0) {
+      Serial.printf("[http] POST... code: %d\n", httpResponseCode);
+      if (httpResponseCode == HTTP_CODE_OK) {
+        String response = http.getString();
+        Serial.println("Yanıt: " + response);
+      }
+    } else {
+      Serial.printf("[http] POST... failed, error: %s\n", http.errorToString(httpResponseCode).c_str());
+    }
+
+    http.end();
+  }
+  delay(1000);
+  enableFaceRecognition();
 }
 
 void disableFaceRecognition() {
