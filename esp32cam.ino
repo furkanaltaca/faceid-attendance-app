@@ -166,6 +166,14 @@ void nextStudent() {
   if (currentStudentIndex >= studentCount) {
     currentStudentIndex = 0;
   }
+
+  while (students[currentStudentIndex].faceId != -1) {
+    currentStudentIndex++;
+    if (currentStudentIndex >= studentCount) {
+      currentStudentIndex = 0;
+    }
+  }
+
   String currentStudentName = students[currentStudentIndex].name;
   sendNextStudentInfoForEnroll(currentStudentName);
 }
@@ -290,7 +298,7 @@ void fetchStudentList() {
 
             students[studentCount].name = obj["name"].as<String>();
             students[studentCount].studentNo = obj["id"].as<int>();
-            students[studentCount].faceId = obj["face_id"].isNull() ? -1 : obj["faceId"].as<int>();
+            students[studentCount].faceId = obj["face_id"].isNull() ? -1 : obj["face_id"].as<int>();
             students[studentCount].isPresent = obj["attended"].as<bool>();
 
             studentCount++;
@@ -463,7 +471,7 @@ void sendNextStudentInfoForEnroll(String studentName) {
 
     if (httpResponseCode > 0) {
       Serial.printf("[http] POST... code: %d\n", httpResponseCode);
-      if (httpResponseCode == HTTP_CODE_OK) {
+      if (httpResponseCode == 201) {
         String response = http.getString();
         Serial.println("Yanıt: " + response);
       }
@@ -481,7 +489,6 @@ void disableFaceRecognition() {
   detection_enabled = 0;
   recognition_enabled = 0;
   faceId = -1;
-  isEnrollingFace = false;
 }
 
 void enableFaceRecognition() {
